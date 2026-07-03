@@ -867,6 +867,129 @@ Diff -> Add Existing Diff...
 
 不要只看总分。Flutter 包里包含大量 Flutter 引擎、Dart 基础库和第三方 SDK。如果两个 App 使用相同 Flutter 版本和相同第三方库，总体相似度可能被这些共同代码抬高。
 
+### 截图实战解读
+
+下面几张图是一次实际 BinDiff 结果。阅读时建议按顺序看：先看整体总览，再看 Call Graph，再看 Matched / Unmatched 函数。
+
+#### 图 1：Workspace 总览页
+
+![BinDiff Workspace 总览](./assets/bindiff-overview-summary.png)
+
+这张图用于快速判断“两个包整体有多像”。
+
+重点看：
+
+- 左侧 Workspace 树：当前选中的是 `App_v1 vs App_v2`，说明这是这两个导出结果之间的比对。
+- `Functions 99.8%`：函数匹配比例极高。图中 29885 个函数匹配，占 99.8%；只有 33 个 Primary Only 和 29 个 Secondary Only。
+- `Similarity 0.98`：整体相似度为 0.98，属于高度相似。
+- 下方 `Primary Image` / `Secondary Image`：确认两边架构都是 `AARCH64-64`，函数数量也接近，说明这次比对对象是同类 iOS arm64 二进制。
+
+怎么判断：
+
+- 如果 `Similarity` 接近 1.0，说明二进制结构高度相似。
+- 但 Flutter 场景不能只看这个总分，因为 Flutter 引擎、Dart 基础库和相同 SDK 会带来大量共同代码。
+
+#### 图 2：Call Graph 总览页
+
+![BinDiff Call Graph 总览](./assets/bindiff-call-graph-summary.png)
+
+这张图比总览页更细，展示函数、调用关系、基本块、跳转、指令几个维度。
+
+重点看：
+
+- `Functions 99.8%`：绝大多数函数能匹配。
+- `Basic Blocks 98.0%`：基本块相似度很高，说明控制流结构大面积重合。
+- `Jumps 96.3%`：跳转结构也高度接近。
+- `Instructions 97.2%`：指令层面也非常接近。
+- `Calls 10.1%`：这里不是相似度总分，而是调用关系分类图。它表示调用边的匹配/差异分布，不要单独拿它当“整体相似度”。
+- 底部表格中的 `Similarity 0.98`、`Confidence 0.99`：这是核心结论。相似度高，且工具对匹配结果置信度高。
+
+怎么判断：
+
+- `Similarity` 高，同时 `Confidence` 也高，说明这个结果可信度较强。
+- `Basic Blocks`、`Jumps`、`Instructions` 都高，表示不是只有函数数量接近，而是控制流和指令结构也接近。
+
+#### 图 3：Matched Functions 匹配函数列表
+
+![BinDiff Matched Functions](./assets/bindiff-matched-functions.png)
+
+这张图用于找“哪些函数被判定为同一个函数”。
+
+重点看：
+
+- 左侧选中 `Matched Functions (29885)`，说明有 29885 个函数成功匹配。
+- `Similarity` 列：当前很多函数是 `1.00`，表示对应函数几乎完全一致。
+- `Confidence` 列：置信度越高，BinDiff 越确定这两个函数是同一个逻辑函数。
+- `Primary Name` / `Secondary Name`：两边函数名。很多是 `sub_xxx`，说明符号名已经不具备业务可读性，需要结合地址、基本块、字符串、Ghidra 反编译视图进一步判断。
+- 顶部勾选项：
+  - `Show structural changes`：显示结构变化。
+  - `Show only instructions changed`：只看指令变化。
+  - `Show identical`：显示完全相同函数。想看差异时可以取消它。
+
+怎么判断：
+
+- 如果你想看“哪里不一样”，先取消 `Show identical`，再按 `Similarity` 排序。
+- 对 Flutter 包来说，很多 `Similarity = 1.00` 的函数可能是框架、Dart runtime 或第三方 SDK，不一定都是业务代码。
+- 真正值得看的是：基本块多、跳转多、相似度高、疑似业务逻辑的函数。
+
+#### 图 4：Primary Unmatched Functions
+
+![BinDiff Primary Unmatched Functions](./assets/bindiff-primary-unmatched.png)
+
+这张图显示只存在于 Primary 里的函数，也就是左侧包有、右侧包没有匹配上的函数。
+
+重点看：
+
+- 左侧选中 `Primary Unmatched Functions (33/29918)`。
+- 图中总共有 33 个 Primary 未匹配函数。
+- 表格列含义：
+  - `Address`：函数地址。
+  - `Name`：函数名。
+  - `Basic Blocks`：基本块数量。
+  - `Jumps`：跳转数量。
+  - `Instructions`：指令数量。
+  - `Callers` / `Callees`：调用它的函数数量、它调用的函数数量。
+
+怎么判断：
+
+- Primary Unmatched 可以理解为“Primary 中疑似新增或独有的函数”。
+- 如果这些函数基本块、跳转、指令数量较多，说明差异可能更有意义。
+- 如果很多函数只有 1 到 2 条指令，可能只是编译器生成的小函数或对齐/桩代码，分析价值较低。
+
+#### 图 5：Secondary Unmatched Functions
+
+![BinDiff Secondary Unmatched Functions](./assets/bindiff-secondary-unmatched.png)
+
+这张图显示只存在于 Secondary 里的函数，也就是右侧包有、左侧包没有匹配上的函数。
+
+重点看：
+
+- 左侧选中 `Secondary Unmatched Functions (29/29914)`。
+- 图中总共有 29 个 Secondary 未匹配函数。
+- 列含义和 Primary Unmatched 一样，重点仍然看 `Basic Blocks`、`Jumps`、`Instructions`。
+
+怎么判断：
+
+- Secondary Unmatched 可以理解为“Secondary 中疑似新增或独有的函数”。
+- 如果 Primary 和 Secondary 的 unmatched 数量都很少，比如这里是 33 和 29，而 matched 函数接近 3 万个，说明两个包整体差异很小。
+- 如果你做了大量业务重构，但 unmatched 仍然很少，说明改动可能没有显著改变二进制控制流，或者差异被 Flutter/SDK 共同代码淹没了。
+
+#### 这组截图的结论示例
+
+这组结果可以概括为：
+
+```text
+Similarity: 0.98
+Confidence: 0.99
+Matched Functions: 29885
+Primary Unmatched: 33
+Secondary Unmatched: 29
+Basic Blocks: 约 98%
+Instructions: 约 97%
+```
+
+结论：两个二进制整体高度相似。下一步不要只盯总分，应该进入 `Matched Functions`，取消 `Show identical`，重点查看剩余差异函数，以及确认高相似函数中是否包含自己的业务逻辑。
+
 ## 22. Flutter 包相似度的特殊注意点
 
 ### 共同框架会造成相似度虚高
